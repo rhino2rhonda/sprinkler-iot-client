@@ -1,6 +1,7 @@
 import RPi.GPIO as pins
+import SprinklerGlobals as globals
 
-PINS_MODE = pins.BOARD
+PINS_MODE = globals.PINS_MODE
 
 class PinsController(object):
 

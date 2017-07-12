@@ -1,6 +1,7 @@
 import unittest
 from PinsControl import PinsController as PC
 from ValveControl import ValveSwitch as VS
+from SprinklerDB import *
 from ValveControl import ValveMultiSwitch as VMS
 from ValveControl import ValveController as VC
 from SprinklerAPI import CommonSprinklerAPI as API
@@ -10,8 +11,8 @@ import SprinklerGlobals
 import RPi.GPIO as pins
 import zmq
 import pickle
+import random
 
-@unittest.skip("no good reason")
 class TestValveSwitch(unittest.TestCase):
 
     def setUp(self):
@@ -21,24 +22,39 @@ class TestValveSwitch(unittest.TestCase):
     def tearDown(self):
         self.pc.clean_up()
 
+    def get_db_state(self):
+        state = None
+        con = get_connection()
+        cursor = con.cursor()
+        sql = "select state from Valve where id = (select max(id) from Valve);"
+        cursor.execute(sql)
+        data = cursor.fetchone()
+        state = data['state']
+        close_connection(con)
+        return state
+    
     def test_switch_state_initial(self):
-        self.assertEqual(self.switch.state, pins.LOW)
+        db_state = self.get_db_state()
+        if db_state is None:
+            self.assertEqual(self.switch.state, pins.LOW)
+        else:
+            self.assertEqual(self.switch.state, db_state)
 
     def test_switch_open(self):
         self.switch.open()
+        db_state = self.get_db_state()
         self.assertEqual(self.switch.state, pins.HIGH)
+        self.assertEqual(db_state, pins.HIGH)
 
     def test_switch_close(self):
         self.switch.close()
+        db_state = self.get_db_state()
         self.assertEqual(self.switch.state, pins.LOW)
+        self.assertEqual(db_state, pins.LOW)
 
-    def test_switch_toggle(self):
-        old_state = self.switch.state
-        self.switch.toggle()
-        self.assertNotEqual(self.switch.state, old_state)
-        self.switch.toggle()
-        self.assertEqual(self.switch.state, old_state)
-
+    def test_many_switch_toggles(self):
+        for _ in range(10):
+            self.test_switch_open() if random.randint(0,1) else self.test_switch_close()
 
 @unittest.skip("no good reason")
 class TestValveController(unittest.TestCase):
@@ -218,6 +234,7 @@ class TestSprinklerAPI(unittest.TestCase):
         self.assertFalse(self.api.is_controller_started(self.controller_new))
     
 
+@unittest.skip("no good reason")
 class TestCommandLineController(unittest.TestCase):
 
     def setUp(self):
