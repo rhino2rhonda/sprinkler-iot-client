@@ -6,7 +6,7 @@ from PinsControl import PinsController as PC
 from ValveControl import ValveSwitch as VS
 from SprinklerDB import *
 # from ValveControl import ValveMultiSwitch as VMS
-from ValveControl import ValveController as VC
+# from ValveControl import ValveController as VC
 # from SprinklerAPI import CommonSprinklerAPI as API
 # import SprinklerCLI
 # from SprinklerCLI import CommandLineController as CLI
@@ -28,8 +28,8 @@ class TestValveSwitch(unittest.TestCase):
         state = None
         con = get_connection()
         cursor = con.cursor()
-        sql = "select state from Valve where id = (select max(id) from Valve);"
-        count = cursor.execute(sql)
+        sql = "select state from valve_state where id = (select max(id) from valve_state where component_id=%s);"
+        count = cursor.execute(sql, (self.switch.component_id,))
         if count is not 0:
             data = cursor.fetchone()
             state = data['state']
@@ -66,7 +66,7 @@ class TestValveSwitch(unittest.TestCase):
     def test_many_switch_toggles(self): 
         old_state = self.get_db_state()
         if old_state is None: old_state = 0
-        iters = 100
+        iters = 25
         for i in range(iters):
             req_new_state = random.randint(0,1)
             exp_success = 0 if old_state is req_new_state else 1

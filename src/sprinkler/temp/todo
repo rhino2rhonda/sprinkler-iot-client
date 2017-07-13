@@ -2,3 +2,5 @@ Rasp Pi - Health/Up?
 Everything service
 Water flow test (will test water availability and valve status)
 Restore state from DB
+
+IMP: The device cannot communicate with the DB directly. There needs to be server in between for authentication and request processing
