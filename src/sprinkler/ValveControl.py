@@ -1,73 +1,136 @@
 import RPi.GPIO as pins
-from SprinklerDB import *
+import SprinklerDB as DB
 import SprinklerGlobals as globals
+import SprinklerUtils as utils
+import threading
 
-# Constants
-VALVE_PIN = globals.VALVE_PIN
+
+# Globals
+logger = utils.get_logger()
+VALVE_PIN = globals.VALVE_PINi
+
 
 # Operates the valve directly by changing the state of the GPIO pin
-# Saves the latest state of the Valve in the DB
+# Syncs the state of the Valve with the DB
 class ValveSwitch(object):
 
     def __init__(self):
-        self.state = pins.LOW
+
+        logger.debug("Initializing Valve Switch")
+
+        self.lock = threading.RLock()
+
+        # Setup valve pin
         pins.setup(VALVE_PIN, pins.OUT)
-        print "Valve Switch is up and running"
+       
+        # Initially, the valve is switched off
+        self.state = pins.LOW
+        pins.output(VALVE_PIN, pins.LOW)
+        
+        logger.debug("Valve Switch is up and running")
+
+        # Update valve state from DB
         self.sync()
 
+
+    # Opens the valve
     def open(self):
-        con = get_connection()
-        try:
-            con.begin()
-            cursor = con.cursor()
-            sql = "insert into Valve (state) Values (1);"
-            inserted = cursor.execute(sql)
-            print "%d row(s) inserted" % inserted
-            con.commit()
-            pins.output(VALVE_PIN, pins.HIGH)
-            self.state = pins.HIGH
-            print "Valve has been opened"
-        except Exception as ex:
-            "Failed to open Valve:\n%s" % ex
-        finally:
-            con.close()
+        logger.debug("Opening the Valve")
+        new_state = pins.HIGH
+        self.update(new_state)
 
-    def close(self, force=False):
-        con = get_connection()
-        try:
-            con.begin()
-            cursor = con.cursor()
-            sql = "insert into Valve (state) Values (0);"
-            inserted = cursor.execute(sql)
-            print "%d row(s) inserted" % inserted
-            con.commit()
-            pins.output(VALVE_PIN, pins.LOW)
-            self.state = pins.LOW
-            print "Valve has been closed"
-        except Exception as ex:
-            "Failed to close Valve:\n%s" % ex
-        finally:
-            con.close()
 
+    # Closes the valve
+    def close(self):
+        logger.debug("Closing the Valve")
+        new_state = pins.LOW
+        self.update(new_state)
+
+    # Updates the valve state from the latest state in the DB
+    # Returns 1 for success and 0 for failure
     def sync(self):
+
+        def log_sync_error(msg):
+            logger.error("SYNC FAILED: %s",  msg)
+
+        logger.debug("Syncing valve state with DB")
+
+        success = 1
         con = get_connection()
         try:
             cursor = con.cursor()
             sql = "select state from Valve where id = (select max(id) from Valve);"
             cursor.execute(sql)
-            state = cursor.fetchone()
-            print "Valve state from DB: %d" % state
-            self.close() if state is None or state == 0 else self.open()
+            data = cursor.fetchone()
+            new_state = data['state']
+            logger.debug("Valve state from DB: %s", state)
+            if new_state is not None:
+                succes = self.update(new_state)
+            else:
+                log_sync_error("Valve state is not available in DB")
+                success = 0
         except Exception as ex:
-            print "Failed to sync Valve State with DB:\n%s" % ex
+            log_sync_error("Error occurred while fetching Valve state from DB:\n%s", ex)
+            success = 0
         finally:
             close_connection(con)
+    
+        if success is 1:
+            logger.debug("Valve state has been synced with DB")
 
-    def toggle(self):
-        if self.state is pins.LOW:
-            self.open()
-        else:
-            self.close()
+        return success
+
+
+    # Updates the valve state at the pin and DB
+    # Returns 1 for success and 0 for failure
+    def update(self, new_state):
+
+        def log_update_error(msg):
+            logger.error("UPDATE FAILED: %s",  msg)
+
+        logger.debug("Updating valve state")
+
+        if new_state not in [pins.LOW, pins.HIGH]:
+            log_update_error("Invalid valve state %s" % new_state)
+            return 0
+
+        old_state = self.state
+        if new_state is old_state:
+            log_update_error("Valve state is already %d" % new_state)
+            return 0
+
+        logger.debug("Valve state will be changed from %d to %d" % (old_state, new_state))
+
+        # Update and pin and DB status in a transactional and thread safe manner
+        with self.lock:
+
+            # Update the valve status
+            try:
+                self.state = new_state
+                pins.output(VALVE_PIN, new_state)
+            except Exception as ex:
+                log_update_error("Error occurred while switching the pin state:\n %s" % ex)
+                return 0
+
+            # Update the DB
+            con = DB.get_connection()
+            try:
+                con.begin()
+                cursor = con.cursor()
+                sql = "insert into Valve (state) Values (%d)"
+                inserted = cursor.execute(sql, (new_state,))
+                con.commit()
+                logger.debug("Rows inserted: %d", inserted)
+            except Exception as ex:
+                log_update_error("Error occurred while saving state to DB:\n %s" % ex)
+                logger.warn("Reverintg valve state to %d", old_state)
+                self.state = old_state
+                pins.output(VALVE_PIN, old_state)
+                return 0
+            finally:
+                DB.close_connection(con)
+
+        logger.debug("Updated valve state from %d to %d" % (old_state, new_state))
 
 
 # Operates the valve directly and is controller aware
