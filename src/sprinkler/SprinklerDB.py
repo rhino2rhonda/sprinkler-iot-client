@@ -10,7 +10,7 @@ DB_NAME = globals.DB_NAME
 def get_connection():
     return pymysql.connect(
             user=DB_USER,
-            password=DB_PASSWORD,
+            password=DB_PSWD,
             db=DB_NAME,
             charset='utf8mb4',
             cursorclass=pymysql.cursors.DictCursor
