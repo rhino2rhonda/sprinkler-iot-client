@@ -7,7 +7,7 @@ import threading
 
 # Globals
 logger = utils.get_logger()
-VALVE_PIN = globals.VALVE_PINi
+VALVE_PIN = globals.VALVE_PIN
 
 
 # Operates the valve directly by changing the state of the GPIO pin
@@ -37,14 +37,14 @@ class ValveSwitch(object):
     def open(self):
         logger.debug("Opening the Valve")
         new_state = pins.HIGH
-        self.update(new_state)
+        return self.update(new_state)
 
 
     # Closes the valve
     def close(self):
         logger.debug("Closing the Valve")
         new_state = pins.LOW
-        self.update(new_state)
+        return self.update(new_state)
 
     # Updates the valve state from the latest state in the DB
     # Returns 1 for success and 0 for failure
@@ -56,24 +56,24 @@ class ValveSwitch(object):
         logger.debug("Syncing valve state with DB")
 
         success = 1
-        con = get_connection()
+        con = DB.get_connection()
         try:
             cursor = con.cursor()
             sql = "select state from Valve where id = (select max(id) from Valve);"
-            cursor.execute(sql)
-            data = cursor.fetchone()
-            new_state = data['state']
-            logger.debug("Valve state from DB: %s", state)
-            if new_state is not None:
-                succes = self.update(new_state)
-            else:
+            count = cursor.execute(sql)
+            if count is 0:
                 log_sync_error("Valve state is not available in DB")
                 success = 0
+            else:
+                data = cursor.fetchone()
+                new_state = data['state']
+                logger.debug("Valve state from DB: %s", new_state)
+                success = self.update(new_state)
         except Exception as ex:
-            log_sync_error("Error occurred while fetching Valve state from DB:\n%s", ex)
+            log_sync_error("Error occurred while fetching Valve state from DB:\n%s" % ex)
             success = 0
         finally:
-            close_connection(con)
+            DB.close_connection(con)
     
         if success is 1:
             logger.debug("Valve state has been synced with DB")
@@ -102,35 +102,42 @@ class ValveSwitch(object):
         logger.debug("Valve state will be changed from %d to %d" % (old_state, new_state))
 
         # Update and pin and DB status in a transactional and thread safe manner
+        success = 1
         with self.lock:
 
             # Update the valve status
+            logger.debug("Toggling pin state")
             try:
                 self.state = new_state
                 pins.output(VALVE_PIN, new_state)
             except Exception as ex:
                 log_update_error("Error occurred while switching the pin state:\n %s" % ex)
                 return 0
+            logger.debug("Pin state has been toggled from %d to %d" % (old_state, new_state))
 
             # Update the DB
+            logger.debug("Updating valve state in DB")
             con = DB.get_connection()
             try:
                 con.begin()
                 cursor = con.cursor()
-                sql = "insert into Valve (state) Values (%d)"
+                sql = "insert into Valve (state) Values (%s)"
                 inserted = cursor.execute(sql, (new_state,))
                 con.commit()
                 logger.debug("Rows inserted: %d", inserted)
             except Exception as ex:
                 log_update_error("Error occurred while saving state to DB:\n %s" % ex)
-                logger.warn("Reverintg valve state to %d", old_state)
+                logger.warn("Reverting valve state to %d", old_state)
                 self.state = old_state
                 pins.output(VALVE_PIN, old_state)
-                return 0
+                success = 0
             finally:
                 DB.close_connection(con)
+            logger.debug("Updated valve state in DB")
 
         logger.debug("Updated valve state from %d to %d" % (old_state, new_state))
+
+        return success
 
 
 # Operates the valve directly and is controller aware
