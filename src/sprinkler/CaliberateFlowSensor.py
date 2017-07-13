@@ -1,28 +1,57 @@
 import RPi.GPIO as pins
-import time
+import sys
 
-INPUT_PIN=40
-CALC_FREQ=10 #secs
+INPUT_PIN=38
+CALIB_FACTOR=365 # pulses/Litre
 
-flow_pulse_counter=0#1 pulse = 7.5 L
-def yolo(pin_no):
+MODE="calib" #calib/test
+if len(sys.argv) > 1:
+    MODE = sys.argv[1]
+
+flow_pulse_counter=0
+def record_pulse(pin_no):
     global flow_pulse_counter
     flow_pulse_counter+=1
-    # print "Flow Pulse Detected: %d" % flow_pulse_counter
-
 
 pins.setmode(pins.BOARD)
 pins.setup(INPUT_PIN, pins.IN, pull_up_down=pins.PUD_DOWN)
-pins.add_event_detect(INPUT_PIN, pins.RISING, callback=yolo)
+pins.add_event_detect(INPUT_PIN, pins.RISING, callback=record_pulse)
 
-curr_time = time.time()
-counter = 0
-while True:
-    new_time = time.time()
-    if(new_time - curr_time > CALC_FREQ):
-        curr_time = new_time
-        counter += 1
-        #lph = float(flow_pulse_counter*360)/7.5
-        #print "Flow is %.2f L/Hr. Counter was %d" % (lph, flow_pulse_counter)
-        #flow_pulse_counter=0
-        print "Time %d : Flow Counter %d" % (counter*10,flow_pulse_counter)
+calib_config = []
+if MODE == "calib":
+    calib_config += ["1 Litre"] * 5
+    calib_config += ["10 Litres"] * 3
+elif MODE == "test":
+    calib_config += ["1 Litre"] * 4
+else:
+    print "Invalid mode %s" % MODE
+    sys.exit(1)
+
+print "********Flow Sensor Caliberation************\n\n"
+
+for i,calib in enumerate(calib_config):
+
+    if MODE == "calib":
+        print "\n\nCaliberation %d of %d\n" % (i+1, len(calib_config))
+        raw_input("Press ENTER to start measuring %s" % calib)
+        flow_pulse_counter=0
+        raw_input("Press ENTER to stop measuring")
+        num_pulses = flow_pulse_counter
+        with open('flow-calib-results', 'a') as fp:
+            fp.write("%s,%d\n" % (calib, num_pulses))
+        print "Measured %s. Num pulses: %d" % (calib, num_pulses)
+    
+    elif MODE == "test":
+        print "\n\nTest %d of %d\n" % (i+1, len(calib_config))
+        raw_input("Press ENTER to start measuring %s" % calib)
+        flow_pulse_counter=0
+        raw_input("Press ENTER to stop measuring")
+        num_pulses = flow_pulse_counter
+        litres = float(num_pulses)/CALIB_FACTOR
+        with open('flow-calib-tests', 'a') as fp:
+            fp.write("%s,%f\n" % (calib, litres))
+        print "Measured %.2f L. Num pulses: %d" % (litres, num_pulses)
+
+pins.cleanup()
+
+print "************DONE*************"
