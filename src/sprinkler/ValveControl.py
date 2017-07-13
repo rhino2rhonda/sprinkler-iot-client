@@ -1,27 +1,67 @@
 import RPi.GPIO as pins
-
+from SprinklerDB import *
+import SprinklerGlobals as globals
 
 # Constants
-VALVE_PIN = 40
-
+VALVE_PIN = globals.VALVE_PIN
 
 # Operates the valve directly by changing the state of the GPIO pin
+# Saves the latest state of the Valve in the DB
 class ValveSwitch(object):
 
     def __init__(self):
         self.state = pins.LOW
         pins.setup(VALVE_PIN, pins.OUT)
         print "Valve Switch is up and running"
+        self.sync()
 
     def open(self):
-        pins.output(VALVE_PIN, pins.HIGH)
-        self.state = pins.HIGH
-        print "Valve has been opened"
+        con = get_connection()
+        try:
+            con.begin()
+            cursor = con.cursor()
+            sql = "insert into Valve (state) Values (1);"
+            inserted = cursor.execute(sql)
+            print "%d row(s) inserted" % inserted
+            con.commit()
+            pins.output(VALVE_PIN, pins.HIGH)
+            self.state = pins.HIGH
+            print "Valve has been opened"
+        except Exception as ex:
+            "Failed to open Valve:\n%s" % ex
+        finally:
+            con.close()
 
     def close(self, force=False):
-        pins.output(VALVE_PIN, pins.LOW)
-        self.state = pins.LOW
-        print "Valve has been closed"
+        con = get_connection()
+        try:
+            con.begin()
+            cursor = con.cursor()
+            sql = "insert into Valve (state) Values (0);"
+            inserted = cursor.execute(sql)
+            print "%d row(s) inserted" % inserted
+            con.commit()
+            pins.output(VALVE_PIN, pins.LOW)
+            self.state = pins.LOW
+            print "Valve has been closed"
+        except Exception as ex:
+            "Failed to close Valve:\n%s" % ex
+        finally:
+            con.close()
+
+    def sync(self):
+        con = get_connection()
+        try:
+            cursor = con.cursor()
+            sql = "select state from Valve where id = (select max(id) from Valve);"
+            cursor.execute(sql)
+            state = cursor.fetchone()
+            print "Valve state from DB: %d" % state
+            self.close() if state is None or state == 0 else self.open()
+        except Exception as ex:
+            print "Failed to sync Valve State with DB:\n%s" % ex
+        finally:
+            close_connection(con)
 
     def toggle(self):
         if self.state is pins.LOW:
