@@ -1,4 +1,4 @@
-import pins
+import RPi.GPIO as pins
 
 try:
     from PrivateConfig import config
