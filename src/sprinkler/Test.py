@@ -4,7 +4,7 @@ globals.LOG_LEVEL = logging.INFO
 import unittest
 from PinsControl import PinsController as PC
 from ValveControl import ValveSwitch as VS
-from SprinklerDB import *
+import SprinklerDB as DB
 # from ValveControl import ValveMultiSwitch as VMS
 # from ValveControl import ValveController as VC
 # from SprinklerAPI import CommonSprinklerAPI as API
@@ -26,18 +26,16 @@ class TestValveSwitch(unittest.TestCase):
 
     def get_db_state(self):
         state = None
-        con = get_connection()
-        cursor = con.cursor()
-        sql = "select state from valve_state where id = (select max(id) from valve_state where component_id=%s);"
-        count = cursor.execute(sql, (self.switch.component_id,))
-        if count is not 0:
-            data = cursor.fetchone()
-            state = data['state']
-        close_connection(con)
+        with DB.Connection as cursor:
+            sql = "select state from valve_state where id = (select max(id) from valve_state where component_id=%s);"
+            count = cursor.execute(sql, (self.switch.component_id,))
+            if count is not 0:
+                data = cursor.fetchone()
+                state = data['state']
         return state
    
     # @unittest.skip("no good reason")
-    def test_switch_state_initial(self):
+    def test1_switch_initial_state(self):
         db_state = self.get_db_state()
         if db_state is None:
             self.assertEqual(self.switch.state, pins.LOW)
@@ -45,37 +43,43 @@ class TestValveSwitch(unittest.TestCase):
             self.assertEqual(self.switch.state, db_state)
 
     # @unittest.skip("no good reason")
-    def test_switch_open(self):
-        success = self.switch.open() 
-        self.assertTrue(success in [0,1])
+    def test2_switch_open(self):
+        success = 1
+        try:
+            self.switch.open()
+        except:
+            success = 0
         db_state = self.get_db_state()
         self.assertEqual(self.switch.state, pins.HIGH)
         self.assertEqual(db_state, pins.HIGH)
         return success
 
     # @unittest.skip("no good reason")
-    def test_switch_close(self):
-        success = self.switch.close()
-        self.assertTrue(success in [0,1])
+    def test3_switch_close(self):
+        success = 1
+        try:
+            self.switch.close()
+        except:
+            success = 0
         db_state = self.get_db_state()
         self.assertEqual(self.switch.state, pins.LOW)
         self.assertTrue(db_state in [None, pins.LOW])
         return success
 
     # @unittest.skip("no good reason")
-    def test_many_switch_toggles(self): 
+    def test4_switch_many_toggles(self): 
         old_state = self.get_db_state()
         if old_state is None: old_state = 0
-        iters = 25
+        iters = 10
         for i in range(iters):
             req_new_state = random.randint(0,1)
             exp_success = 0 if old_state is req_new_state else 1
             # print "\n\n NEW TEST %d of %d:\tPrev State: %s\tNext State: %d\tExpected Success: %d" % (i+1, iters, old_state, req_new_state, exp_success)
-            success = self.test_switch_open() if req_new_state is 1 else self.test_switch_close()
+            success = self.test2_switch_open() if req_new_state is 1 else self.test3_switch_close()
             # print "Update success: %s" % success
             self.assertEqual(exp_success, success)
             old_state = req_new_state
-        self.test_switch_close()
+        self.test3_switch_close()
 
 @unittest.skip("no good reason")
 class TestValveController(unittest.TestCase):

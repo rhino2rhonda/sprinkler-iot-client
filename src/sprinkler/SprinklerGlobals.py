@@ -19,6 +19,7 @@ DB_PORT = config['DB_PORT'] if config.has_key('DB_PORT') else ''
 DB_USER = config['DB_USER'] if config.has_key('DB_USER') else ''
 DB_PSWD = config['DB_PSWD'] if config.has_key('DB_PSWD') else ''
 DB_NAME = config['DB_NAME'] if config.has_key('DB_NAME') else ''
+DB_PING_INTERVAL = config['DB_PING_INTERVAL'] if config.has_key('DB_PING_INTERVAL') else 10 # secs
 
 # Logging
 LOG_LEVEL = logging.DEBUG
