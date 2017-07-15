@@ -67,6 +67,7 @@ class Connection(object):
     # The context of the with block is set as a cursor to the existing connection
     # Only one thread can use the with block at one time
     def __enter__(self):
+        self.logger.debug("Acquiring thread level lock on DB connection")
         self.lock.acquire()
         self.connection.begin()
         self.cursor = self.connection.cursor()
@@ -76,11 +77,23 @@ class Connection(object):
     # Cleans up the cursor and releases the lock after the with block terminates
     def __exit__(self, ex_type, ex_val, ex_trace):
         if ex_val is None:
-            self.connection.commit()
+            try:
+               self.connection.commit()
+               self.logger.debug("Transaction has been committed")
+            except Exception as ex:
+                logger.error("Failed to commit transaction:\n%s", str(ex))
         else:
-            self.connection.rollback()
-        self.cursor.close()
-        self.cursor = None
+            try:
+               self.connection.rollback()
+               self.logger.warn("Transaction has been rollbacked")
+            except Exception as ex:
+                logger.error("Failed to rollback transaction:\n%s", str(ex))
+        try:
+            self.cursor.close()
+            self.cursor = None
+        except Exception as ex:
+            self.logger.error("Failed to close cursor to DB connection:\n%s", str(ex))
+        
         self.lock.release()
 
 
@@ -88,7 +101,8 @@ class Connection(object):
     def revive_connection(self):
         self.logger.debug("Attempting to revivie DB connection (if it is dead)")
         try:
-            self.connection.ping(True)
+            with self.lock:
+                self.connection.ping(True)
             return True
         except Exception as ex:
             self.logger.error("Connection lost to DB")
@@ -101,5 +115,5 @@ class Connection(object):
         while self.active:
             time.sleep(DB_PING_INTERVAL)
             revived = self.revive_connection()
-            self.logger.debug("Keep alive process completed with status %s. Will retry in %d seconds" % (revivied, DB_PING_INTERVAL))
+            self.logger.debug("Keep alive process completed with status %s. Will retry in %d seconds" % (revived, DB_PING_INTERVAL))
         self.logger.debug("Keep alive thread will now be closed")
