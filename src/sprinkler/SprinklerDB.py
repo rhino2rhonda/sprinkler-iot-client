@@ -34,8 +34,10 @@ class Connection(object):
 
         self.logger.debug("Connection manager is up and running")
 
+
     def __call__(self):
         return self
+
 
     # Initializes a new BD connection
     def create_connection(self):
@@ -56,7 +58,7 @@ class Connection(object):
 
 
     # Closes DB connection
-    def close_connections(self):
+    def close_connection(self):
         self.logger.debug("Closing DB connection")
         self.active = False
         self.connection.close()
@@ -82,18 +84,22 @@ class Connection(object):
         self.lock.release()
 
 
+    # Checks id the connection is alive and revives it if it is not
+    def revive_connection(self):
+        self.logger.debug("Attempting to revivie DB connection (if it is dead)")
+        try:
+            self.connection.ping(True)
+            return True
+        except Exception as ex:
+            self.logger.error("Connection lost to DB")
+            return False
+
+
     # To be executed as a thread to ensure that the connection to the databse is kept alive
     def keep_alive(self):
         self.logger.debug("Keep alive thread is up and running")
         while self.active:
             time.sleep(DB_PING_INTERVAL)
-            try:
-                self.connection.ping()
-            except Exception as ex:
-                self.logger.error("Connection lost to DB. Will retry in %d secs" % DB_PING_INTERVAL)
+            revived = self.revive_connection()
+            self.logger.debug("Keep alive process completed with status %s. Will retry in %d seconds" % (revivied, DB_PING_INTERVAL))
         self.logger.debug("Keep alive thread will now be closed")
-
-class xyz():
-
-    def __init__(self):
-        pass

@@ -5,16 +5,12 @@ import unittest
 from PinsControl import PinsController as PC
 from ValveControl import ValveSwitch as VS
 import SprinklerDB as DB
-# from ValveControl import ValveMultiSwitch as VMS
-# from ValveControl import ValveController as VC
-# from SprinklerAPI import CommonSprinklerAPI as API
-# import SprinklerCLI
-# from SprinklerCLI import CommandLineController as CLI
 import RPi.GPIO as pins
-# import zmq
-# import pickle
 import random
+import threading
+import time
 
+@unittest.skip("no good reason")
 class TestValveSwitch(unittest.TestCase):
 
     def setUp(self):
@@ -81,6 +77,150 @@ class TestValveSwitch(unittest.TestCase):
             old_state = req_new_state
         self.test3_switch_close()
 
+
+class TestDBConnection(self):
+
+    def setUp(self):
+        self.connection = DB.Connection()
+
+    def tearDown(self):
+        self.connection.close_connection()
+        self.connection.keep_alive_thread.join()
+
+    def test1_singularity(self):
+        anotherConnection = DB.Connection()
+        self.assertIs(self.connection, anotherConnection)
+
+    def test2_simple_query(self):
+        with self.connection() as cursor:
+            sql = "Select 1"
+            cursor.execute(sql)
+            row = cursor.fetchone()
+            self.assertIsNot(row, None)
+            
+    def test3_cursor_close(self):
+        cursor = None
+        with self.connection() as cursor:
+            sql = "Selrct 1"
+            cursor.execute(sql)
+        failed = 0
+        try:
+            cursor.fetchone()
+        except:
+            failed = 1
+        self.assertIs(failed, 1)
+
+    def test4_auto_commit(self):
+        with self.connection() as cursor:
+            sql = "insert into valve_status (component_id, state) Values(%s, %s)"
+            inserted = cursor.execute(sql, (-1,-1))
+            self.assertIs(inserted, 1)
+        with self.connection() as cursor:
+            sql = "select * from valve_status where component_id=%s and state=%s"
+            count = cursor.execute(sql, (-1,-1))
+            self.assertIs(count, 1)
+            row = cursor.fetchone()
+            self.assertIs(row['component_id'],-1)
+            self.assertIs(row['state'],-1)
+        with self.connection() as cursor:
+            sql = "delete from valve_status where component_id=%s and state=%s"
+            deleted = cursor.execute(sql, (-1,-1))
+            self.assertIs(deleted, 1)
+        with self.connection() as cursor:
+            sql = "select * from valve_status where component_id=%s and state=%s"
+            count = cursor.execute(sql, (-1,-1))
+            self.assertIs(count, 0)
+
+    def test5_rollback_db_exception(self):
+        pass_ = True
+        try:
+            with self.connection() as cursor:
+                sql = "insert into valve_status (component_id, state) Values(%s, %s)"
+                inserted = cursor.execute(sql, (-1,-1))
+                self.assertIs(inserted, 1)
+                incorrect_sql = "select * from table_not_defined"
+                cursor.execute()
+                pass_ = False
+        except:
+            pass 
+        self.assertTrue(pass_)
+        with self.connection() as cursor:
+            sql = "select * from valve_status where component_id=%s and state=%s"
+            count = cursor.execute(sql, (-1,-1))
+            self.assertIs(count, 0)
+
+    def test5_rollback_other_exception(self):
+        pass_ = True
+        try:
+            with self.connection() as cursor:
+                sql = "insert into valve_status (component_id, state) Values(%s, %s)"
+                inserted = cursor.execute(sql, (-1,-1))
+                self.assertIs(inserted, 1)
+                5/0
+                pass_ = False
+        except:
+            pass 
+        self.assertTrue(pass_)
+        with self.connection() as cursor:
+            sql = "select * from valve_status where component_id=%s and state=%s"
+            count = cursor.execute(sql, (-1,-1))
+            self.assertIs(count, 0)
+
+    
+    def test6_synchronised_access(self):
+       
+        pass_ = True
+        shared_counter = 0
+        num_threads = 10
+        sleep_time = 1
+        def increment():
+            with self.connection() as cursor:
+                if shared_counter is not 0:
+                    pass_ = False
+                shared_counter += 1
+                time.sleep(sleep_time)
+        threads = []
+        for x in range(num_threads):
+            thrd = threading.Thread(target=increment)
+            thrd.start()
+            threads.append(thrd)
+        for thrd in threads:
+            thrd.join()
+
+        self.assertTrue(pass_)
+            
+
+    def test7_interactive_connection_revival(self):
+
+
+        def test_connection():
+            with self.connection as cursor():
+                sql = "select 1"
+                cursor.execute(sql)
+        
+        self.connnection.active = False
+        self.connection.keep_alive_thread.join()
+
+        test_connection()
+        
+        raw_input("Disable socket connection and press ENTER")
+        pass_ = True
+        try:
+            test_connection()
+            pass_ = False
+        except:
+            pass
+        self.assertTrue(pass_)
+
+        revived = self.connection.revive_connection()
+        self.assertFalse(revived)
+
+        raw_input("Renable socket connection and press ENTER")
+        revived = self.connection.revive_connection()
+        self.assertTrue(revived)
+        test_connection()
+
+        
 @unittest.skip("no good reason")
 class TestValveController(unittest.TestCase):
 
