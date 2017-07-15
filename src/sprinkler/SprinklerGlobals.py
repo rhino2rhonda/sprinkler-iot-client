@@ -12,6 +12,8 @@ PRODUCT_ID = config['PRODUCT_ID'] if config.has_key('PRODUCT_ID') else 1 #TODO: 
 # Pins
 PINS_MODE = pins.BOARD
 VALVE_PIN = config['VALVE_PIN'] if config.has_key('VALVE_PIN') else 40
+VALVE_STATE_UPDATE_INTERVAL = config['VALVE_STATE_UPDATE_INTERVAL'] if config.has_key('VALVE_STATE_UPDATE_INTERVAL') else 5 # secs
+VALVE_PIN = config['VALVE_PIN'] if config.has_key('VALVE_PIN') else 40
 
 # DB
 DB_HOST = config['DB_HOST'] if config.has_key('DB_HOST') else ''

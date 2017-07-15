@@ -1,15 +1,21 @@
 import logging
 import SprinklerGlobals as globals
-globals.LOG_LEVEL = logging.INFO
-globals.DB_PING_INTERVAL = 0.01
+globals.LOG_LEVEL = logging.DEBUG
+globals.DB_PING_INTERVAL = 20
+globals.VALVE_STATE_UPDATE_INTERVAL = 3
 import unittest
 from PinsControl import PinsController as PC
+import ValveControl
 from ValveControl import ValveSwitch as VS
+from ValveControl import RemoteValveController as RemoteVC
+from ValveControl import ValveTimerController as TimerVC
+from ValveControl import ValveManager as VM
 import SprinklerDB as DB
 import RPi.GPIO as pins
 import random
 import threading
 import time
+import datetime
 
 @unittest.skip("no good reason")
 class TestValveSwitch(unittest.TestCase):
@@ -43,7 +49,7 @@ class TestValveSwitch(unittest.TestCase):
     def test2_switch_open(self):
         success = 1
         try:
-            self.switch.open()
+            self.switch.update(pins.HIGH)
         except:
             success = 0
         db_state = self.get_db_state()
@@ -55,7 +61,7 @@ class TestValveSwitch(unittest.TestCase):
     def test3_switch_close(self):
         success = 1
         try:
-            self.switch.close()
+            self.switch.update(pins.LOW)
         except:
             success = 0
         db_state = self.get_db_state()
@@ -104,7 +110,7 @@ class TestDBConnection(unittest.TestCase):
             row = cursor.fetchone()
             self.assertIsNot(row, None)
             
-    #@unittest.skip("no good reason")
+    # @unittest.skip("no good reason")
     def test3_cursor_close(self):
         cursor = None
         sql = "Select 1"
@@ -181,7 +187,7 @@ class TestDBConnection(unittest.TestCase):
     def test7_synchronised_access(self):
         pass_ = True
         shared = {"counter" : 0}
-        num_threads = 100
+        num_threads = 20
         sleep_time = 0.2
         def increment(i, shared):
             with self.connection() as cursor:
@@ -231,212 +237,270 @@ class TestDBConnection(unittest.TestCase):
         self.assertTrue(revived)
         test_connection()
 
-        
+       
 @unittest.skip("no good reason")
-class TestValveController(unittest.TestCase):
+class TestRemoteValveController(unittest.TestCase):
+
+    def setUp(self):
+        self.controller = RemoteVC()
+        self.component_id = ValveControl.get_component_id(ValveControl.VALVE_COMPONENT_NAME)
+
+    def latest_state_db(self):
+        with DB.Connection() as cursor:
+            sql = "select state from valve_remote_switch_job where " +\
+                    "id=(select max(id) from valve_remote_switch_job where component_id=%s)"
+            count = cursor.execute(sql, (self.component_id,))
+            if count is 0:
+                return None
+            else:
+                row = cursor.fetchone()
+                return row['state']
+    
+    def update_controller(self, state):
+        with DB.Connection() as cursor:
+            sql = "insert into valve_remote_switch_job (component_id, state) Values(%s, %s)"
+            inserted = cursor.execute(sql, (self.component_id, state))
+            self.assertIs(inserted, 1)
+
+    # @unittest.skip("no good reason")
+    def test1_controller_sync_db_empty(self):
+        db_state = self.latest_state_db()
+        self.assertIs(db_state, None)
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        self.assertEqual(self.controller.state, pins.LOW)
+
+    # @unittest.skip("no good reason")
+    def test2_controller_sync_open(self):
+        self.update_controller(pins.HIGH)
+        db_state = self.latest_state_db()
+        self.assertIs(db_state, pins.HIGH)
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.HIGH)
+        self.assertTrue(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test3_controller_sync_close(self):
+        self.update_controller(pins.LOW)
+        db_state = self.latest_state_db()
+        self.assertIs(db_state, pins.LOW)
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertTrue(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test4_controller_sync_fail_open(self):
+        self.test3_controller_sync_close()
+        self.update_controller(-1)
+        db_state = self.latest_state_db()
+        self.assertIs(db_state, -1)
+        success = self.controller.sync_with_db()
+        self.assertFalse(success)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertTrue(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test5_controller_sync_fail_close(self):
+        self.test2_controller_sync_open()
+        self.update_controller(3)
+        db_state = self.latest_state_db()
+        self.assertIs(db_state, 3)
+        success = self.controller.sync_with_db()
+        self.assertFalse(success)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.HIGH)
+        self.assertTrue(controller_state.forced)
+        
+
+@unittest.skip("no good reason")
+class TestValveTimerController(unittest.TestCase):
+
+    def setUp(self):
+        self.controller = TimerVC()
+        self.component_id = ValveControl.get_component_id(ValveControl.VALVE_COMPONENT_NAME)
+
+    def latest_state_db(self):
+        with DB.Connection() as cursor:
+            sql = "select enabled, start_time, end_time from valve_timer where " +\
+                    "id=(select max(id) from valve_timer where component_id=%s)"
+            count = cursor.execute(sql, (self.component_id,))
+            if count is 0:
+                return None
+            else:
+                row = cursor.fetchone()
+                return row
+    
+    def update_controller(self, enabled, start_time=None, end_time=None):
+        with DB.Connection() as cursor:
+            sql = "insert into valve_timer (component_id, enabled, start_time, end_time) Values(%s, %s, %s, %s)"
+            inserted = cursor.execute(sql, (self.component_id, enabled, start_time, end_time))
+            self.assertIs(inserted, 1)
+
+    def get_curr_time(self):
+        curr_time = datetime.datetime.now().time()
+        return datetime.timedelta(hours=curr_time.hour, minutes=curr_time.minute, seconds=curr_time.second)
+
+    @unittest.skip("no good reason")
+    def test1_controller_sync_db_empty(self):
+        db_state = self.latest_state_db()
+        self.assertIs(db_state, None)
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        self.assertFalse(self.controller.timer_enabled)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertFalse(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test2_controller_sync_open(self):
+        curr_time = self.get_curr_time()
+        test_start_time = curr_time - datetime.timedelta(minutes=10)
+        test_end_time = curr_time + datetime.timedelta(minutes=10)
+        self.update_controller(True, test_start_time, test_end_time)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 1)
+        self.assertEqual(db_state['start_time'].total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(db_state['end_time'].total_seconds(), test_end_time.total_seconds())
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        self.assertTrue(self.controller.timer_enabled)
+        self.assertEqual(self.controller.start_time.total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(self.controller.end_time.total_seconds(), test_end_time.total_seconds())
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.HIGH)
+        self.assertFalse(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test3_controller_sync_close_1(self):
+        curr_time = self.get_curr_time()
+        test_start_time = curr_time - datetime.timedelta(minutes=20)
+        test_end_time = curr_time - datetime.timedelta(minutes=10)
+        self.update_controller(True, test_start_time, test_end_time)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 1)
+        self.assertEqual(db_state['start_time'].total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(db_state['end_time'].total_seconds(), test_end_time.total_seconds())
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        self.assertTrue(self.controller.timer_enabled)
+        self.assertEqual(self.controller.start_time.total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(self.controller.end_time.total_seconds(), test_end_time.total_seconds())
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertFalse(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test4_controller_sync_close_2(self):
+        self.update_controller(False)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 0)
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        self.assertFalse(self.controller.timer_enabled)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertFalse(controller_state.forced)
+
+    # @unittest.skip("no good reason")
+    def test5_controller_sync_fail_missing_start_end_times(self):
+        old_timer_enabled = self.controller.timer_enabled
+        old_start_time = self.controller.start_time
+        old_end_time = self.controller.end_time
+        old_state = self.controller.get_controller_state()
+        self.update_controller(True)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 1)
+        self.assertIs(db_state['start_time'], None)
+        self.assertIs(db_state['end_time'], None)
+        success = self.controller.sync_with_db()
+        self.assertFalse(success)
+        self.assertEqual(self.controller.timer_enabled, old_timer_enabled)
+        self.assertEqual(self.controller.start_time, old_start_time)
+        self.assertEqual(self.controller.end_time, old_end_time)
+        controller_state = self.controller.get_controller_state()
+        self.assertEqual(controller_state.state, old_state.state)
+        self.assertEqual(controller_state.forced, old_state.forced)
+       
+
+    # @unittest.skip("no good reason")
+    def test6_controller_sync_fail_invalid_start_end_times(self):
+        old_timer_enabled = self.controller.timer_enabled
+        old_start_time = self.controller.start_time
+        old_end_time = self.controller.end_time
+        old_state = self.controller.get_controller_state()
+        curr_time = self.get_curr_time()
+        test_start_time = curr_time + datetime.timedelta(minutes=10)
+        test_end_time = curr_time - datetime.timedelta(minutes=10)
+        self.update_controller(True, test_start_time, test_end_time)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 1)
+        self.assertEqual(db_state['start_time'].total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(db_state['end_time'].total_seconds(), test_end_time.total_seconds())
+        success = self.controller.sync_with_db()
+        self.assertFalse(success)
+        self.assertEqual(self.controller.timer_enabled, old_timer_enabled)
+        self.assertEqual(self.controller.start_time, old_start_time)
+        self.assertEqual(self.controller.end_time, old_end_time)
+        controller_state = self.controller.get_controller_state()
+        self.assertEqual(controller_state.state, old_state.state)
+        self.assertEqual(controller_state.forced, old_state.forced)
+       
+
+    # @unittest.skip("no good reason")
+    def test7_controller_sync_fail_invalid_enabled_flag(self):
+        old_timer_enabled = self.controller.timer_enabled
+        old_start_time = self.controller.start_time
+        old_end_time = self.controller.end_time
+        old_state = self.controller.get_controller_state()
+        curr_time = self.get_curr_time()
+        test_start_time = curr_time - datetime.timedelta(minutes=10)
+        test_end_time = curr_time + datetime.timedelta(minutes=10)
+        self.update_controller(3, test_start_time, test_end_time)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 3)
+        success = self.controller.sync_with_db()
+        self.assertFalse(success)
+        self.assertEqual(self.controller.timer_enabled, old_timer_enabled)
+        self.assertEqual(self.controller.start_time, old_start_time)
+        self.assertEqual(self.controller.end_time, old_end_time)
+        controller_state = self.controller.get_controller_state()
+        self.assertEqual(controller_state.state, old_state.state)
+        self.assertEqual(controller_state.forced, old_state.forced)
+
+
+# @unittest.skip("no good reason")
+class TestValveManager(unittest.TestCase):
 
     def setUp(self):
         self.pc = PC()
         self.switch = VS()
-        self.controller = VC(self.switch)
+        self.remoteVC = RemoteVC()
+        self.timerVC = TimerVC()
+        self.vm = VM(self.switch, [self.remoteVC, self.timerVC])
         
     def tearDown(self):
+        time.sleep(10)
+        self.vm.active = False
+        self.vm.update_thread.join()
         self.pc.clean_up()
 
-    def test_controller_state_initial(self):
-        self.assertEqual(self.controller.state, pins.LOW)
-        self.assertEqual(self.switch.state, self.controller.state)
+    def test1_init(self):
+        self.assertIsNot(self.switch, None)
+        self.assertIs(len(self.vm.controllers), 2)
+        self.assertIsNot(self.vm.controllers[self.remoteVC.name], None)
+        self.assertIsNot(self.vm.controllers[self.timerVC.name], None)
 
-    def test_controller_open(self):
-        self.controller.open_valve()
-        self.assertEqual(self.controller.state, pins.HIGH)
-        self.assertEqual(self.switch.state, self.controller.state)
-
-    def test_controller_close(self):
-        self.controller.close_valve()
-        self.assertEqual(self.controller.state, pins.LOW)
-        self.assertEqual(self.switch.state, self.controller.state)
-
-    def test_switch_toggle(self):
-        old_state = self.controller.state
-        self.assertEqual(self.switch.state, self.controller.state)
-        self.controller.toggle_valve()
-        self.assertNotEqual(self.controller.state, old_state)
-        self.assertEqual(self.switch.state, self.controller.state)
-        self.controller.toggle_valve()
-        self.assertEqual(self.controller.state, old_state)
-        self.assertEqual(self.switch.state, self.controller.state)
-
-
-@unittest.skip("no good reason")
-class TestValveMultiSwitch(unittest.TestCase):
-
-    def setUp(self):
-        self.pc = PC()
-        self.switch = VMS()
-        self.controller1 = VC(self.switch)
-        self.controller1.name = "TestController1"
-        self.switch.register_controller(self.controller1)
-        self.controller2 = VC(self.switch)
-        self.controller2.name = "TestController2"
-        self.switch.register_controller(self.controller2)
-
-        
-    def tearDown(self):
-        self.pc.clean_up()
-
-    def test_controller_registration(self):
-        self.assertEqual(len(self.switch.controllers), 2)
-        self.assertEqual("TestController1", self.controller1.name)
-        self.assertIn("TestController1", self.switch.controllers.keys())
-        self.assertIs(self.switch.controllers["TestController1"], self.controller1)
-        self.assertEqual("TestController2", self.controller2.name)
-        self.assertIn("TestController2", self.switch.controllers.keys())
-        self.assertIs(self.switch.controllers["TestController2"], self.controller2)
-
-    def test_controller_state_initial(self):
-        self.assertEqual(self.controller1.state, pins.LOW)
-        self.assertEqual(self.controller2.state, pins.LOW)
-        self.assertEqual(self.switch.state, self.controller1.state)
-
-
-    def test_controller_open_single(self):
-        self.controller1.open_valve()
-        self.assertEqual(self.controller1.state, pins.HIGH)
-        self.assertEqual(self.controller2.state, pins.LOW)
-        self.assertEqual(self.switch.state, self.controller1.state)
-    
-    def test_controller_open_multi(self):
-        self.test_controller_open_single()
-        self.controller2.open_valve()
-        self.assertEqual(self.controller2.state, pins.HIGH)
-        self.assertEqual(self.controller1.state, pins.HIGH)
-        self.assertEqual(self.switch.state, self.controller2.state)
-
-    def test_controller_close_single(self):
-        self.test_controller_open_multi()
-        self.controller1.close_valve()
-        self.assertEqual(self.controller1.state, pins.LOW)
-        self.assertEqual(self.controller2.state, pins.HIGH)
-        self.assertEqual(self.switch.state, self.controller2.state)
-
-    def test_controller_close_multi(self):
-        self.test_controller_close_single()
-        self.controller2.close_valve()
-        self.assertEqual(self.controller2.state, pins.LOW)
-        self.assertEqual(self.controller1.state, pins.LOW)
-        self.assertEqual(self.switch.state, self.controller2.state)
-    
-    def test_controller_close_force(self):
-        self.test_controller_open_multi()
-        self.controller1.close_valve(True)
-        self.assertEqual(self.controller1.state, pins.LOW)
-        self.assertEqual(self.controller2.state, pins.LOW)
-        self.assertEqual(self.switch.state, self.controller2.state)
-
-    def test_controller_toggle(self):
-        self.test_controller_open_multi()
-        self.controller1.toggle_valve()
-        self.assertEqual(self.controller1.state, pins.LOW)
-        self.assertEqual(self.controller2.state, pins.HIGH)
-        self.assertEqual(self.switch.state, self.controller2.state)
-
-
-@unittest.skip("no good reason")
-class TestSprinklerAPI(unittest.TestCase):
-
-    def setUp(self):
-        self.pc = PC()
-        self.switch = VMS()
-        self.controller = VC(self.switch)
-        self.controller.name = "TestController"
-        self.switch.register_controller(self.controller)
-        self.controller_new = VC(self.switch)
-        self.controller_new.name = "TestControllerNew"
-        self.switch.register_controller(self.controller_new)
-        self.api = API(self.switch)
-        
-    def tearDown(self):
-        self.pc.clean_up()
-
-    def test_get_controller(self):
-        controller = self.api.get_controller("TestController")
-        self.assertIs(controller, self.controller)
-
-    def test_start_sprinkler(self):
-        self.api.start_sprinkler(self.controller)
-        self.assertEqual(self.controller.state, pins.HIGH)
-        self.assertEqual(self.switch.state, pins.HIGH)
-
-    def test_stop_sprinkler(self):
-        self.test_start_sprinkler()
-        self.api.stop_sprinkler(self.controller)
-        self.assertEqual(self.controller.state, pins.LOW)
-        self.assertEqual(self.switch.state, pins.LOW)
-
-    def test_stop_sprinker_force(self):
-        self.api.start_sprinkler(self.controller)
-        self.api.start_sprinkler(self.controller_new)
-        self.assertEqual(self.controller.state, pins.HIGH)
-        self.assertEqual(self.controller_new.state, pins.HIGH)
-        self.assertEqual(self.switch.state, pins.HIGH)
-        self.api.stop_sprinkler(self.controller, True)
-        self.assertEqual(self.controller.state, pins.LOW)
-        self.assertEqual(self.controller_new.state, pins.LOW)
-        self.assertEqual(self.switch.state, pins.LOW)
-
-    def test_is_sprinkler_started(self):
-        self.api.start_sprinkler(self.controller)
-        self.assertTrue(self.api.is_sprinkler_started())
-        self.api.start_sprinkler(self.controller_new)
-        self.assertTrue(self.api.is_sprinkler_started())
-        self.api.stop_sprinkler(self.controller)
-        self.assertTrue(self.api.is_sprinkler_started())
-        self.api.stop_sprinkler(self.controller_new)
-        self.assertFalse(self.api.is_sprinkler_started())
-
-    def test_is_controller_started(self):
-        self.api.start_sprinkler(self.controller)
-        self.assertTrue(self.api.is_controller_started(self.controller))
-        self.assertFalse(self.api.is_controller_started(self.controller_new))
-        self.api.start_sprinkler(self.controller_new)
-        self.assertTrue(self.api.is_controller_started(self.controller))
-        self.assertTrue(self.api.is_controller_started(self.controller_new))
-        self.api.stop_sprinkler(self.controller)
-        self.assertFalse(self.api.is_controller_started(self.controller))
-        self.assertTrue(self.api.is_controller_started(self.controller_new))
-        self.api.stop_sprinkler(self.controller_new)
-        self.assertFalse(self.api.is_controller_started(self.controller))
-        self.assertFalse(self.api.is_controller_started(self.controller_new))
-    
-
-@unittest.skip("no good reason")
-class TestCommandLineController(unittest.TestCase):
-
-    def setUp(self):
-        self.pc = PC()
-        self.switch = VMS()
-        self.api = API(self.switch)
-        self.controller = CLI(self.switch, self.api)
-        self.req_sub_ack = "Request has been submitted"
-        
-    def tearDown(self):
-        self.controller.stop_server()
-        self.pc.clean_up()
-
-    def test_cli_server(self):
-        data = [[["", "start"], self.req_sub_ack],
-                [["", "is_controller_started"], True],
-                [["", "is_sprinkler_started"], True]]
-        context = zmq.Context()
-        socket = context.socket(zmq.REQ)
-        socket.connect("tcp://localhost:%d" % SprinklerGlobals.CLI_SERVER_PORT)
-        for d in data:
-            dp = pickle.dumps(d[0])
-            socket.send(dp)
-            rp = socket.recv()
-            r = pickle.loads(rp)
-            self.assertEqual(r, d[1])
 
 
 if __name__ == "__main__":

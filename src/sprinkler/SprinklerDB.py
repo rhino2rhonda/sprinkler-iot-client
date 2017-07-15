@@ -116,4 +116,4 @@ class Connection(object):
             time.sleep(DB_PING_INTERVAL)
             revived = self.revive_connection()
             self.logger.debug("Keep alive process completed with status %s. Will retry in %d seconds" % (revived, DB_PING_INTERVAL))
-        self.logger.debug("Keep alive thread will now be closed")
+        self.logger.debug("Keep alive thread will now terminate")
