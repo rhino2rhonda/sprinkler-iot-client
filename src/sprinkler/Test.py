@@ -6,7 +6,7 @@ else:
     import DummyGPIO as pins
 
 import logging
-globals.LOG_LEVEL = logging.DEBUG
+globals.LOG_LEVEL = logging.INFO
 globals.DB_PING_INTERVAL = 5
 globals.VALVE_STATE_UPDATE_INTERVAL = 3
 
@@ -92,7 +92,7 @@ class TestValveSwitch(unittest.TestCase):
         self.test3_switch_close()
 
 
-@unittest.skip("no good reason")
+# @unittest.skip("no good reason")
 class TestDBConnection(unittest.TestCase):
 
     def setUp(self):
@@ -245,7 +245,7 @@ class TestDBConnection(unittest.TestCase):
         test_connection()
 
        
-@unittest.skip("no good reason")
+# @unittest.skip("no good reason")
 class TestRemoteValveController(unittest.TestCase):
 
     def setUp(self):
@@ -370,7 +370,7 @@ class TestRemoteValveController(unittest.TestCase):
         self.assertEqual(self.controller.job_completed, "TEMP")
 
 
-@unittest.skip("no good reason")
+# @unittest.skip("no good reason")
 class TestValveTimerController(unittest.TestCase):
 
     def setUp(self):
@@ -532,25 +532,29 @@ class TestValveTimerController(unittest.TestCase):
         self.assertEqual(controller_state.forced, old_state.forced)
 
 
-class TestValveController(ValveControl.BasicValveController):
+class ValveControllerTest(ValveControl.BasicValveController):
 
     def __init__(self, name):
 
         ValveControl.BasicValveController.__init__(self, name)
         self.controller_state = ValveControl.ControllerState(pins.LOW, datetime.datetime.now())
+        self.fail_sync = False
+
+    def sync_with_db(self):
+        return not self.fail_sync
 
     def get_controller_state(self):
         return self.controller_state
     
 
-@unittest.skip("no good reason")
+# @unittest.skip("no good reason")
 class TestValveManager(unittest.TestCase):
 
     def setUp(self):
         self.pc = PC()
         self.switch = VS()
-        self.testVC1 = TestValveController('test-1')
-        self.testVC2 = TestValveController('test-2')
+        self.testVC1 = ValveControllerTest('test-1')
+        self.testVC2 = ValveControllerTest('test-2')
         self.vm = VM(self.switch, [self.testVC1, self.testVC2])
         
     def tearDown(self):
@@ -562,17 +566,17 @@ class TestValveManager(unittest.TestCase):
         self.vm.active = False
         self.vm.update_thread.join()
 
-    @unittest.skip("no good reason")
+    # @unittest.skip("no good reason")
     def test1_init(self):
         self.assertIsNot(self.switch, None)
         self.assertIs(len(self.vm.controllers), 2)
         self.assertIsNot(self.vm.controllers[self.testVC1.name], None)
         self.assertIsNot(self.vm.controllers[self.testVC2.name], None)
 
-    @unittest.skip("no good reason")
+    # @unittest.skip("no good reason")
     def test2_valve_open_success_scenarios(self):
         self.stop_update_thread()
-        total_tests = 3
+        total_tests = 1
         for test_num in range(total_tests):
             
             try:
@@ -594,10 +598,20 @@ class TestValveManager(unittest.TestCase):
                 self.testVC1.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time + time_delta_10mins)
                 self.testVC2.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time - time_delta_10mins)
 
-            # One open, one close
+            # One open then one close
             elif test_num is 2:
+                self.testVC1.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time - time_delta_10mins)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_5mins)
+            
+            # One close then one open
+            elif test_num is 3:
                 self.testVC1.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins)
-                self.testVC2.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time - time_delta_10mins)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time - time_delta_5mins)
+            
+            # One force close then one open
+            elif test_num is 4:
+                self.testVC1.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins, True)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time - time_delta_5mins)
             
             success = self.vm.update_valve_switch()
             self.assertTrue(success)
@@ -607,7 +621,48 @@ class TestValveManager(unittest.TestCase):
     # @unittest.skip("no good reason")
     def test3_valve_close_success_scenarios(self):
         self.stop_update_thread()
-        total_tests = 4
+        total_tests = 1
+        for test_num in range(total_tests):
+            
+            try:
+                self.switch.update(pins.HIGH)
+            except utils.SprinklerException as ex:
+                pass
+
+            self.assertIs(self.switch.state, pins.HIGH)
+            curr_time = datetime.datetime.now()
+            time_delta_10mins = datetime.timedelta(minutes=10)
+            time_delta_5mins = datetime.timedelta(minutes=5)
+           
+            # Both close
+            if test_num is 0:
+                self.testVC1.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins)
+
+            # Both close, one forced
+            elif test_num is 1:
+                self.testVC1.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins, True)
+
+            # One close, one open future
+            elif test_num is 2:
+                self.testVC1.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_10mins)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time + time_delta_10mins)
+
+            # One open then one force close
+            elif test_num is 3:
+                self.testVC1.controller_state = ValveControl.ControllerState(pins.LOW, curr_time - time_delta_5mins, True)
+                self.testVC2.controller_state = ValveControl.ControllerState(pins.HIGH, curr_time - time_delta_10mins)
+            
+            success = self.vm.update_valve_switch()
+            self.assertTrue(success)
+            self.assertEqual(self.switch.state, pins.LOW)
+            
+    
+    # @unittest.skip("no good reason")
+    def test4_valve_update_fail_scenarios(self):
+        self.stop_update_thread()
+        total_tests = 1
         for test_num in range(total_tests):
             
             try:
