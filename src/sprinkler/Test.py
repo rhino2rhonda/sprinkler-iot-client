@@ -1,8 +1,15 @@
-import logging
 import SprinklerGlobals as globals
+
+if globals.RPi_MODE:
+    import RPi.GPIO as pins
+else:
+    import DummyGPIO as pins
+
+import logging
 globals.LOG_LEVEL = logging.DEBUG
 globals.DB_PING_INTERVAL = 5
 globals.VALVE_STATE_UPDATE_INTERVAL = 3
+
 import SprinklerUtils as utils
 import unittest
 from PinsControl import PinsController as PC
@@ -12,13 +19,12 @@ from ValveControl import RemoteValveController as RemoteVC
 from ValveControl import ValveTimerController as TimerVC
 from ValveControl import ValveManager as VM
 import SprinklerDB as DB
-import RPi.GPIO as pins
 import random
 import threading
 import time
 import datetime
 
-@unittest.skip("no good reason")
+# @unittest.skip("no good reason")
 class TestValveSwitch(unittest.TestCase):
 
     def setUp(self):
@@ -537,7 +543,7 @@ class TestValveController(ValveControl.BasicValveController):
         return self.controller_state
     
 
-# @unittest.skip("no good reason")
+@unittest.skip("no good reason")
 class TestValveManager(unittest.TestCase):
 
     def setUp(self):

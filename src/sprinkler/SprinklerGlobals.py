@@ -1,10 +1,15 @@
-import RPi.GPIO as pins
-import logging
-
 try:
     from PrivateConfig import config
 except:
     config = {}
+RPi_MODE = config['RPi_MODE'] if config.has_key('RPi_MODE') else False
+
+if RPi_MODE:
+    import RPi.GPIO as pins
+else:
+    import DummyGPIO as pins
+
+import logging
 
 # Product
 PRODUCT_ID = config['PRODUCT_ID'] if config.has_key('PRODUCT_ID') else 1 #TODO: This is obviously temporary

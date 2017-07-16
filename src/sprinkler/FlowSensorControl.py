@@ -1,6 +1,11 @@
-import RPi.GPIO as pins
-import time
+import SprinklerGlobals as globals
 
+if globals.RPi_MODE:
+    import RPi.GPIO as pins
+else:
+    import DummyGPIO as pins
+
+import time
 
 # Constants
 INPUT_PIN = 40

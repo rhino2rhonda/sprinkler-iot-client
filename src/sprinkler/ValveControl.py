@@ -1,6 +1,11 @@
-import RPi.GPIO as pins
-import SprinklerDB as DB
 import SprinklerGlobals as globals
+
+if globals.RPi_MODE:
+    import RPi.GPIO as pins
+else:
+    import DummyGPIO as pins
+
+import SprinklerDB as DB
 import SprinklerUtils as utils
 import threading
 import time

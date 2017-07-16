@@ -1,5 +1,9 @@
-import RPi.GPIO as pins
 import SprinklerGlobals as globals
+
+if globals.RPi_MODE: 
+    import RPi.GPIO as pins
+else:
+    import DummyGPIO as pins
 import SprinklerUtils as utils
 
 PINS_MODE = globals.PINS_MODE
