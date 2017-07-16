@@ -12,7 +12,9 @@ DB_USER = globals.DB_USER
 DB_PSWD = globals.DB_PSWD
 DB_NAME = globals.DB_NAME
 DB_PING_INTERVAL = globals.DB_PING_INTERVAL
+PRODUCT_ID = globals.PRODUCT_ID
 
+logger = utils.get_logger()
 
 # Maintains a single DB connection and ensures synchronised access
 # TODO: use DB agnostic ORM instead
@@ -117,3 +119,34 @@ class Connection(object):
             revived = self.revive_connection()
             self.logger.debug("Keep alive process completed with status %s. Will retry in %d seconds" % (revived, DB_PING_INTERVAL))
         self.logger.debug("Keep alive thread will now terminate")
+
+
+# Fetches the ID of a component
+def get_component_id(component_name):
+
+    component_id = None
+
+    with Connection() as cursor:
+
+        sql = "select c.id " +\
+                "from component c " +\
+                "join component_type t " +\
+                "on c.component_type_id = t.id " +\
+                "and t.component_name=%s " +\
+                "and c.product_id=%s"
+
+        count = 0
+        try:
+            count = cursor.execute(sql, (component_name, PRODUCT_ID))
+        except Exception as ex:
+            logger.error("Error occurred while fetching component ID for component %s:\n%s", component_name, str(ex))
+
+        if count is 0:
+            logger.error("Component ID not found for component %s", component_name)
+        else:
+            data = cursor.fetchone()
+            component_id = data['id']
+            logger.debug("Component ID fetched for component %s: %d", component_name, component_id)
+
+    return component_id
+

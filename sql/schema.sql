@@ -86,7 +86,7 @@ create table flow_rate (
 	`id` int auto_increment primary key,
 	`component_id` int not null,
 	`flow_volume` float not null,
-	`time_interval` float not null,
+	`flow_duration` float not null,
 	`created` timestamp not null default current_timestamp,
 	foreign key (`component_id`) references component(`id`)
 );

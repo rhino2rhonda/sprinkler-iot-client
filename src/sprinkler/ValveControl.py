@@ -19,38 +19,8 @@ VALVE_STATE_UPDATE_INTERVAL= globals.VALVE_STATE_UPDATE_INTERVAL
 
 # Constants
 VALVE_COMPONENT_NAME = 'valve'
-REMOTE_SWITCH_COMPONENT_NAME = 'remote-switch'
+REMOTE_SWITCH_COMPONENT_NAME = 'remote-switch'# todo: rename ot controller
 TIMER_COMPONENT_NAME = 'timer'
-
-
-# Fetches the ID of a component
-def get_component_id(component_name):
-   
-    component_id = None
-    
-    with DB.Connection() as cursor:
-    
-        sql = "select c.id " +\
-                "from component c " +\
-                "join component_type t " +\
-                "on c.component_type_id = t.id " +\
-                "and t.component_name=%s " +\
-                "and c.product_id=%s"
-        
-        count = 0
-        try:
-            count = cursor.execute(sql, (component_name, PRODUCT_ID))
-        except Exception as ex: 
-            logger.error("Error occurred while fetching component ID for component %s:\n%s", component_name, str(ex))
-        
-        if count is 0:
-            logger.error("Component ID not found for component %s", component_name)
-        else:
-            data = cursor.fetchone()
-            component_id = data['id']
-            logger.debug("Component ID fetched for component %s: %d", component_name, component_id)
-    
-    return component_id
 
 
 # Operates the valve directly by changing the state of the GPIO pin
@@ -60,12 +30,10 @@ class ValveSwitch(object):
     def __init__(self):
 
         self.logger = utils.get_logger()
-        self.logger.debug("Initializing Valve Switch")
-
         self.lock = threading.RLock()
 
         # Unique component ID
-        self.component_id = get_component_id(VALVE_COMPONENT_NAME)
+        self.component_id = DB.get_component_id(VALVE_COMPONENT_NAME)
         if self.component_id is None:
             self.logger.error("Component ID not found in DB")
             raise Exception("Component ID not found in DB")
@@ -197,7 +165,7 @@ class BasicValveController(object):
         self.name = controller_name
 
         # Unique component ID
-        self.component_id = get_component_id(VALVE_COMPONENT_NAME)
+        self.component_id = DB.get_component_id(VALVE_COMPONENT_NAME)
         if self.component_id is None:
             self.logger.error("Component ID not found in DB")
             raise Exception("Component ID not found in DB")

@@ -16,9 +16,17 @@ PRODUCT_ID = config['PRODUCT_ID'] if config.has_key('PRODUCT_ID') else 1 #TODO: 
 
 # Pins
 PINS_MODE = pins.BOARD
+
+# Valve
 VALVE_PIN = config['VALVE_PIN'] if config.has_key('VALVE_PIN') else 40
 VALVE_STATE_UPDATE_INTERVAL = config['VALVE_STATE_UPDATE_INTERVAL'] if config.has_key('VALVE_STATE_UPDATE_INTERVAL') else 5 # secs
-VALVE_PIN = config['VALVE_PIN'] if config.has_key('VALVE_PIN') else 40
+
+# Flow Sensor
+FLOW_SENSOR_PIN = config['FLOW_SENSOR_PIN'] if config.has_key('FLOW_SENSOR_PIN') else 38
+PULSES_PER_LITRE = config['PULSES_PER_LITRE'] if config.has_key('PULSES_PER_LITRE') else 365
+FLOW_POLL_INTERVAL = config['FLOW_POLL_INTERVAL'] if config.has_key('FLOW_POLL_INTERVAL') else 10 # seconds
+SAVE_MIN_FLOW_VOLUME = config['SAVE_MIN_FLOW_VOLUME'] if config.has_key('SAVE_MIN_FLOW_VOLUME') else 0.1 # litres
+SAVE_MAX_FLOW_DURATION = config['SAVE_MAX_FLOW_DURATION'] if config.has_key('SAVE_MAX_FLOW_DURATION') else 3600 # seconds
 
 # DB
 DB_HOST = config['DB_HOST'] if config.has_key('DB_HOST') else ''

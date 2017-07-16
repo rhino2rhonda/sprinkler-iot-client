@@ -9,6 +9,8 @@ import logging
 globals.LOG_LEVEL = logging.INFO
 globals.DB_PING_INTERVAL = 5
 globals.VALVE_STATE_UPDATE_INTERVAL = 3
+globals.FLOW_POLL_INTERVAL = 3
+globals.SAVE_MAX_FLOW_DURATION = 5
 
 import SprinklerUtils as utils
 import unittest
@@ -18,6 +20,8 @@ from ValveControl import ValveSwitch as VS
 from ValveControl import RemoteValveController as RemoteVC
 from ValveControl import ValveTimerController as TimerVC
 from ValveControl import ValveManager as VM
+import FlowSensorControl
+from FlowSensorControl import FlowSensor as FS
 import SprinklerDB as DB
 import random
 import threading
@@ -250,7 +254,7 @@ class TestRemoteValveController(unittest.TestCase):
 
     def setUp(self):
         self.controller = RemoteVC()
-        self.component_id = ValveControl.get_component_id(ValveControl.VALVE_COMPONENT_NAME)
+        self.component_id = DB.get_component_id(ValveControl.VALVE_COMPONENT_NAME)
 
     def latest_state_db(self):
         with DB.Connection() as cursor:
@@ -375,7 +379,7 @@ class TestValveTimerController(unittest.TestCase):
 
     def setUp(self):
         self.controller = TimerVC()
-        self.component_id = ValveControl.get_component_id(ValveControl.VALVE_COMPONENT_NAME)
+        self.component_id = DB.get_component_id(ValveControl.VALVE_COMPONENT_NAME)
 
     def latest_state_db(self):
         with DB.Connection() as cursor:
@@ -699,6 +703,69 @@ class TestValveManager(unittest.TestCase):
             self.assertTrue(success)
             self.assertEqual(self.switch.state, pins.LOW)
             
+
+# @unittest.skip("no good reason")
+class TestFlowSensor(unittest.TestCase):
+
+    def setUp(self):
+        self.pc = PC()
+        self.fs = FS()
+        self.component_id = DB.get_component_id(FlowSensorControl.FLOW_SENSOR_COMPONENT_NAME)
+
+    def tearDown(self):
+        self.fs.active = False
+        self.fs.save_thread.join()
+        self.pc.clean_up()
+
+    def stop_update_thread(self):
+        self.fs.active = False
+        self.fs.save_thread.join()
+
+    # @unittest.skip("no good reason")
+    def test1__save_flow_success(self):
+        self.stop_update_thread()
+        pulses = self.fs.pulses = int(random.randint(1000,9999))
+        last_read_time = self.fs.last_read_time
+        success = self.fs.save_flow()
+        self.assertTrue(success)
+        with DB.Connection() as cursor:
+            sql = "select flow_volume, flow_duration from flow_rate where id=(select max(id) from flow_rate where component_id=%s)"
+            count = cursor.execute(sql, (self.component_id,))
+            self.assertIs(count, 1)
+            row = cursor.fetchone()
+            expected_flow_volme = int(float(pulses)/globals.PULSES_PER_LITRE)
+            self.assertEqual(int(row['flow_volume']), expected_flow_volme)
+        self.assertIs(self.fs.pulses, 0)
+        self.assertNotEqual(self.fs.last_read_time, last_read_time)
+
+    # @unittest.skip("no good reason")
+    def test1_save_fail_volume_threshold(self):
+        self.stop_update_thread()
+        pulses = self.fs.pulses = 10
+        last_read_time = self.fs.last_read_time
+        success = self.fs.save_flow()
+        self.assertFalse(success)
+        self.assertIs(self.fs.pulses, 10)
+        self.assertEqual(self.fs.last_read_time, last_read_time)
+
+    # @unittest.skip("no good reason")
+    def test1_save_success_duration_threshold(self):
+        self.stop_update_thread()
+        time.sleep(5)
+        pulses = self.fs.pulses = int(random.randint(0,20))
+        last_read_time = self.fs.last_read_time
+        success = self.fs.save_flow()
+        self.assertTrue(success)
+        with DB.Connection() as cursor:
+            sql = "select flow_volume, flow_duration from flow_rate where id=(select max(id) from flow_rate where component_id=%s)"
+            count = cursor.execute(sql, (self.component_id,))
+            self.assertIs(count, 1)
+            row = cursor.fetchone()
+            expected_flow_volme = int(float(pulses)/globals.PULSES_PER_LITRE)
+            self.assertEqual(int(row['flow_volume']), expected_flow_volme)
+        self.assertIs(self.fs.pulses, 0)
+        self.assertNotEqual(self.fs.last_read_time, last_read_time)
+
 
 if __name__ == "__main__":
     unittest.main()
