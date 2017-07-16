@@ -171,8 +171,11 @@ class ValveSwitch(object):
 # Stores controller state and related attributes
 class ControllerState(object):
 
-    def __init__(self, state, forced=False):
+    def __init__(self, state, controller, due_by, forced=False, state_id=None):
+        self.state_id = state_id
         self.state = state
+        self.controller = controller
+        self.due_by = due_by
         self.forced = forced
 
 
@@ -195,9 +198,6 @@ class BasicValveController(object):
         if self.component_id is None:
             self.logger.error("Component ID not found in DB")
             raise Exception("Component ID not found in DB")
-       
-        # Initially, controller is off
-        self.state = pins.LOW
 
 
     # Updates the cotroller state from the latest state in the DB
@@ -208,11 +208,11 @@ class BasicValveController(object):
 
     # Determines the current controller state
     def get_controller_state(self):
-        return ControllerState(this.state)   
+        return None
 
 
     # Perform any controller specific action that should occur after a valve update completes (successful or not)
-    def post_valve_update(this, updated):
+    def valve_update_callback(this, updated_state):
         pass
 
 
@@ -264,12 +264,11 @@ class ValveManager(object):
         def log_update_error(msg):
             self.logger.error("UPDATE VALVE SWITCH ERROR: %s", msg)
 
-        # Flags that determine valve state
-        any_open = False
-        any_forced = False
-        sync_failed = False
-
         self.logger.debug("Syncing valve state controller states from DB")
+        
+        # Collect lates state for all controllers
+        controller_states = []
+        sync_failed = False
         for controller in self.controllers.values():
                 
             # Sync controller with db
@@ -279,20 +278,19 @@ class ValveManager(object):
                 log_update_error("Controller sync for controller %s was not successful")
                 sync_failed = True
                 break
+            controller_states.append(controller.get_controller_state())
 
-            # Determine current controller state and update the flags
-            curr = controller.get_controller_state()
-            if curr.state is pins.HIGH:
-                any_open = True
-            elif curr.state is pins.LOW and curr.forced:
-                any_forced = True
-            
-        # Compute next state for valve
-        next_state = pins.LOW
-        if sync_failed:
-            next_state = None
-        elif any_open and not any_forced:
-            next_state = pins.HIGH
+        # Evaluate final state
+        controller_states.sort(key=lambda cs: cs.due_by, reverse=True)
+        computed_state = None
+        for state in controller_states:
+            if computed_state is None:
+                computed_state = state
+                continue
+            if state.state is pins.HIGH or (state.state is pins.LOW and state.forced is True):
+                computed_state = state
+                break
+        next_state = None if sync_failed or computed_state is None else computed_state.state
 
         # Update the switch
         updated = False
@@ -312,9 +310,9 @@ class ValveManager(object):
         # Execute post update callbacks
         self.logger.debug("Executing post update controller callbacks")
         for controller in self.controllers.values():
-            controller.post_valve_update(updated)
+            controller.valve_update_callback(computed_state if updated else None)
         
-        return True
+        return updated
 
 
 class RemoteValveController(BasicValveController):
@@ -322,20 +320,30 @@ class RemoteValveController(BasicValveController):
     def __init__(self):
         BasicValveController.__init__(self, REMOTE_SWITCH_COMPONENT_NAME)
 
+        # Initial state
+        self.state = pins.LOW
+        self.state_id = None
+        self.state_created = datetime.datetime.now()
+        self.job_completed = False
+
 
     def sync_with_db(self):
+
+        def log_sync_error(msg):
+            self.logger.error("VALVE CONTROLLER SYNC FAILED: %s", msg)
+
         
         self.logger.debug("Syncing controller %s with db", self.name)
         with DB.Connection() as cursor:
 
-            sql = "select state from valve_remote_switch_job where " +\
+            sql = "select id, state, completion_status, created from valve_remote_switch_job where " +\
                     "id=(select max(id) from valve_remote_switch_job where component_id=%s)"
 
             count = 0
             try:
                 count = cursor.execute(sql, (self.component_id,))
             except Exception as ex:
-                self.logger.error("Error occurred while fetching latest state for controller %s:\n%s", (self.name, ex))
+                log_sync_error("Error occurred while fetching latest state for controller %s:\n%s", (self.name, ex))
                 return False
             
             if count is 0:
@@ -343,23 +351,70 @@ class RemoteValveController(BasicValveController):
                 self.state = pins.LOW
             else:
                 row = cursor.fetchone()
+                
                 new_state = row['state']
                 if new_state not in [pins.LOW, pins.HIGH]:
-                    self.logger.error("Invalid state for controller %s was found in DB: %s" % (self.name, new_state))
+                    log_sync_error("Invalid state for controller %s was found in DB: %s" % (self.name, new_state))
                     return False
+                
+                state_id = row['id']
+                if state_id is None:
+                    log_sync_error("Invalid state id for controller %s was found in DB: %s" % (self.name, state_id))
+                    return False
+
+                state_created = row['created']
+                if state_created is None or type(state_created) is not datetime.datetime:
+                    log_sync_error("Invalid state created datetime for controller %s was found in DB: %s" % (self.name, state_created))
+                    return False
+
                 self.state = new_state
+                self.state_id = state_id
+                self.state_created - state_created
+                self.job_completed = row['completion_status'] in [0,1]
             
             return True
 
 
     def get_controller_state(self):
         self.logger.debug("Fetching controller state for controller %s" % self.name)
-        return ControllerState(self.state, True)
+        forced = self.state_id is not None
+        return ControllerState(self.state, self.name, self.state_created, forced, self.state_id)
 
 
-    def post_valve_update(self, updated):
-        self.logger.debug("Executing post valve update callback for controller %s" % self.name)
-        pass
+    def valve_update_callback(self, updated_state):
+        
+        if update_state is None:
+            return
+
+        self.logger.debug("Executing post valve update callback for controller %s", self.name)
+       
+        if self.job_completed:
+            self.logger.debug("Job status has already been updated for controller %s", self.name)
+            return
+    
+        if updated_state.state_id is None:
+            self.logger.warn("State id not found for controller %s. Job status update will be skipped")
+            return
+
+        if updated_state.state_id is not self.state_id:
+            self.logger.error("Update state id (%s) is different from controller state id(%s). Skipping job status update")
+            return False
+
+        expected_state = self.get_controller_state()
+        job_completed = 1 if updated_state.state is expected_state.state else 0
+
+        # Updating job status
+        with DB.Connection() as cursor:
+            
+            sql = "update valve_remote_switch_job set job_completed=%s where id=%s"
+           
+            try:
+                updated_rows = cursor.execute(sql, (job_completed, self.state_id))
+                self.logger.info("Rows updated: %d", updated_rows)
+                self.job_completed = True
+                self.logger.debug("Job status updated for state id %d for controller %s", updated_state.state_id, self.name)
+            except Exception as ex:
+                self.logger.error("Failed to update job status for state id %d for controller %s:\n%s", updated_state, self.name, str(ex))
 
 
 class ValveTimerController(BasicValveController):
@@ -444,8 +499,3 @@ class ValveTimerController(BasicValveController):
             logger.debug("Valve timer is enabled. Current time lies in timer duration?: %d", curr_state)
         
         return ControllerState(curr_state)
-
-
-    def post_valve_update(self, updated):
-        self.logger.debug("Executing post valve update callback for controller %s" % self.name)
-        pass

@@ -247,20 +247,21 @@ class TestRemoteValveController(unittest.TestCase):
 
     def latest_state_db(self):
         with DB.Connection() as cursor:
-            sql = "select state from valve_remote_switch_job where " +\
+            sql = "select id,state,completion_status from valve_remote_switch_job where " +\
                     "id=(select max(id) from valve_remote_switch_job where component_id=%s)"
             count = cursor.execute(sql, (self.component_id,))
             if count is 0:
                 return None
             else:
                 row = cursor.fetchone()
-                return row['state']
+                return row
     
-    def update_controller(self, state):
+    def update_controller(self, state, completion=None):
         with DB.Connection() as cursor:
-            sql = "insert into valve_remote_switch_job (component_id, state) Values(%s, %s)"
-            inserted = cursor.execute(sql, (self.component_id, state))
+            sql = "insert into valve_remote_switch_job (component_id, state, completion_status) Values(%s, %s, %s)"
+            inserted = cursor.execute(sql, (self.component_id, state, completed))
             self.assertIs(inserted, 1)
+
 
     # @unittest.skip("no good reason")
     def test1_controller_sync_db_empty(self):
@@ -269,11 +270,16 @@ class TestRemoteValveController(unittest.TestCase):
         success = self.controller.sync_with_db()
         self.assertTrue(success)
         self.assertEqual(self.controller.state, pins.LOW)
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertFalse(controller_state.forced)
+
 
     # @unittest.skip("no good reason")
     def test2_controller_sync_open(self):
         self.update_controller(pins.HIGH)
         db_state = self.latest_state_db()
+        db_state = db_state['state']
         self.assertIs(db_state, pins.HIGH)
         success = self.controller.sync_with_db()
         self.assertTrue(success)
@@ -285,6 +291,7 @@ class TestRemoteValveController(unittest.TestCase):
     def test3_controller_sync_close(self):
         self.update_controller(pins.LOW)
         db_state = self.latest_state_db()
+        db_state = db_state['state']
         self.assertIs(db_state, pins.LOW)
         success = self.controller.sync_with_db()
         self.assertTrue(success)
@@ -297,6 +304,7 @@ class TestRemoteValveController(unittest.TestCase):
         self.test3_controller_sync_close()
         self.update_controller(-1)
         db_state = self.latest_state_db()
+        db_state = db_state['state']
         self.assertIs(db_state, -1)
         success = self.controller.sync_with_db()
         self.assertFalse(success)
@@ -309,13 +317,49 @@ class TestRemoteValveController(unittest.TestCase):
         self.test2_controller_sync_open()
         self.update_controller(3)
         db_state = self.latest_state_db()
+        db_state = db_state['state']
         self.assertIs(db_state, 3)
         success = self.controller.sync_with_db()
         self.assertFalse(success)
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.HIGH)
         self.assertTrue(controller_state.forced)
-        
+
+    # @unittest.skip("no good reason")
+    def test6_controller_sync_fail_invalid_completion(self):
+        self.update_controller(0, -1)
+        success = self.controller.sync_with_db()
+        self.assertFalse(success)
+
+    # @unittest.skip("no good reason")
+    def test7_controller_job_update_success(self):
+        self.update_controller(0)
+        self.controller.sync_with_db()
+        self.assertFalse(self.controller.job_completed)
+        updated_state = ValveControl.ControllerState(pins.LOW, self.controller.name, None, state_id=self.controller.state_id)
+        self.controller.valve_update_callback(updated_state)
+        self.assrtTrue(job_completed)
+        db_state = self.latest_state_db()
+        self.assertIs(db_state['completion_status'], 1)
+    
+    # @unittest.skip("no good reason")
+    def test8_controller_job_update_fail(self):
+        self.update_controller(0)
+        self.controller.sync_with_db()
+        self.assertFalse(self.controller.job_completed)
+        updated_state = ValveControl.ControllerState(pins.HIGH, self.controller.name, None, state_id=self.controller.state_id)
+        self.controller.valve_update_callback(updated_state)
+        self.assrtTrue(job_completed)
+        db_state = self.latest_state_db()
+        self.assertIs(db_state['completion_status'], 0)
+
+    # @unittest.skip("no good reason")
+    def test9_controller_job_update_unchanged(self):
+        self.controller.job_completed = "TEMP"
+        updated_state = ValveControl.ControllerState(pins.HIGH, self.controller.name,None)
+        self.controller.valve_update_callback()
+        self.assertEqual(self.controller.job_completed, "TEMP")
+
 
 @unittest.skip("no good reason")
 class TestValveTimerController(unittest.TestCase):

@@ -60,17 +60,6 @@ create table valve_controller_type (
 	`controller_name` varchar(20) not null unique
 );
 
-create table valve_controller_state (
-	`id` int auto_increment primary key,
-	`component_id` int not null,
-	`controller_type_id` int not null,
-	`state` int not null,
-	`forced` int not null,
-	`created` timestamp not null default current_timestamp,
-	foreign key (`component_id`) references component(`id`),
-	foreign key (`controller_type_id`) references valve_controller_type(`id`)
-);
-
 create table valve_timer (
 	`id` int auto_increment primary key,
 	`component_id` int not null,
@@ -81,10 +70,10 @@ create table valve_timer (
 	foreign key (`component_id`) references component(`id`)
 );
 
-create table valve_switch_job (
+create table valve_remote_switch_job (
 	`id` int auto_increment primary key,
 	`component_id` int not null,
-	`next_state` int not null,
+	`state` int not null,
 	`completion_status` int not null default 0,
 	`created` timestamp not null default current_timestamp,
 	foreign key (`component_id`) references component(`id`)
