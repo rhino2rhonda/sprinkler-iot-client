@@ -74,8 +74,9 @@ create table valve_remote_switch_job (
 	`id` int auto_increment primary key,
 	`component_id` int not null,
 	`state` int not null,
-	`completion_status` int not null default 0,
+	`completion_status` int default null,
 	`created` timestamp not null default current_timestamp,
+	`updated` timestamp not null default current_timestamp on update current_timestamp,
 	foreign key (`component_id`) references component(`id`)
 );
 
