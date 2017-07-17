@@ -6,7 +6,6 @@ else:
     import DummyGPIO as pins
 
 import logging
-globals.LOG_LEVEL = logging.INFO
 globals.DB_PING_INTERVAL = 5
 globals.VALVE_STATE_UPDATE_INTERVAL = 3
 globals.FLOW_POLL_INTERVAL = 3
@@ -258,7 +257,7 @@ class TestRemoteValveController(unittest.TestCase):
 
     def latest_state_db(self):
         with DB.Connection() as cursor:
-            sql = "select id,state,completion_status from valve_remote_switch_job where " +\
+            sql = "select id,state,completion_status,created from valve_remote_switch_job where " +\
                     "id=(select max(id) from valve_remote_switch_job where component_id=%s)"
             count = cursor.execute(sql, (self.component_id,))
             if count is 0:
@@ -276,6 +275,7 @@ class TestRemoteValveController(unittest.TestCase):
 
     # @unittest.skip("no good reason")
     def test1_controller_sync_db_empty(self):
+        due_by = self.controller.state_created
         db_state = self.latest_state_db()
         self.assertIs(db_state, None)
         success = self.controller.sync_with_db()
@@ -284,39 +284,41 @@ class TestRemoteValveController(unittest.TestCase):
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.LOW)
         self.assertFalse(controller_state.forced)
-
+        self.assertIs(controller_state.due_by, due_by)
 
     # @unittest.skip("no good reason")
     def test2_controller_sync_open(self):
         self.update_controller(pins.HIGH)
         db_state = self.latest_state_db()
-        db_state = db_state['state']
-        self.assertIs(db_state, pins.HIGH)
+        state = db_state['state']
+        self.assertIs(state, pins.HIGH)
         success = self.controller.sync_with_db()
         self.assertTrue(success)
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.HIGH)
         self.assertTrue(controller_state.forced)
+        self.assertEqual(controller_state.due_by.replace(microsecond=0), db_state['created'])
 
     # @unittest.skip("no good reason")
     def test3_controller_sync_close(self):
         self.update_controller(pins.LOW)
         db_state = self.latest_state_db()
-        db_state = db_state['state']
-        self.assertIs(db_state, pins.LOW)
+        state = db_state['state']
+        self.assertIs(state, pins.LOW)
         success = self.controller.sync_with_db()
         self.assertTrue(success)
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.LOW)
         self.assertTrue(controller_state.forced)
+        self.assertEqual(controller_state.due_by.replace(microsecond=0), db_state['created'])
 
     # @unittest.skip("no good reason")
     def test4_controller_sync_fail_open(self):
         self.test3_controller_sync_close()
         self.update_controller(-1)
         db_state = self.latest_state_db()
-        db_state = db_state['state']
-        self.assertIs(db_state, -1)
+        state = db_state['state']
+        self.assertIs(state, -1)
         success = self.controller.sync_with_db()
         self.assertFalse(success)
         controller_state = self.controller.get_controller_state()
@@ -328,8 +330,8 @@ class TestRemoteValveController(unittest.TestCase):
         self.test2_controller_sync_open()
         self.update_controller(3)
         db_state = self.latest_state_db()
-        db_state = db_state['state']
-        self.assertIs(db_state, 3)
+        state = db_state['state']
+        self.assertIs(state, 3)
         success = self.controller.sync_with_db()
         self.assertFalse(success)
         controller_state = self.controller.get_controller_state()
@@ -383,7 +385,7 @@ class TestValveTimerController(unittest.TestCase):
 
     def latest_state_db(self):
         with DB.Connection() as cursor:
-            sql = "select enabled, start_time, end_time from valve_timer where " +\
+            sql = "select enabled, start_time, end_time, created from valve_timer where " +\
                     "id=(select max(id) from valve_timer where component_id=%s)"
             count = cursor.execute(sql, (self.component_id,))
             if count is 0:
@@ -404,6 +406,7 @@ class TestValveTimerController(unittest.TestCase):
 
     # @unittest.skip("no good reason")
     def test1_controller_sync_db_empty(self):
+        due_by = self.controller.timer_created
         db_state = self.latest_state_db()
         self.assertIs(db_state, None)
         success = self.controller.sync_with_db()
@@ -412,12 +415,14 @@ class TestValveTimerController(unittest.TestCase):
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.LOW)
         self.assertFalse(controller_state.forced)
+        self.assertIs(controller_state.due_by, due_by)
 
     # @unittest.skip("no good reason")
     def test2_controller_sync_open(self):
         curr_time = self.get_curr_time()
         test_start_time = curr_time - datetime.timedelta(minutes=10)
         test_end_time = curr_time + datetime.timedelta(minutes=10)
+        day_beg = datetime.datetime.combine(datetime.datetime.now().date(), datetime.time.min)
         self.update_controller(True, test_start_time, test_end_time)
         db_state = self.latest_state_db()
         self.assertIsNot(db_state, None)
@@ -432,12 +437,14 @@ class TestValveTimerController(unittest.TestCase):
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.HIGH)
         self.assertFalse(controller_state.forced)
+        self.assertEqual((controller_state.due_by-day_beg).total_seconds(), test_start_time.total_seconds())
 
     # @unittest.skip("no good reason")
     def test3_controller_sync_close_1(self):
         curr_time = self.get_curr_time()
-        test_start_time = curr_time - datetime.timedelta(minutes=20)
-        test_end_time = curr_time - datetime.timedelta(minutes=10)
+        test_start_time = curr_time + datetime.timedelta(minutes=20)
+        test_end_time = curr_time + datetime.timedelta(minutes=30)
+        day_beg = datetime.datetime.combine(datetime.datetime.now().date(), datetime.time.min)
         self.update_controller(True, test_start_time, test_end_time)
         db_state = self.latest_state_db()
         self.assertIsNot(db_state, None)
@@ -452,9 +459,32 @@ class TestValveTimerController(unittest.TestCase):
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.LOW)
         self.assertFalse(controller_state.forced)
+        self.assertEqual(controller_state.due_by.replace(microsecond=0), day_beg)
 
     # @unittest.skip("no good reason")
     def test4_controller_sync_close_2(self):
+        curr_time = self.get_curr_time()
+        test_start_time = curr_time - datetime.timedelta(minutes=20)
+        test_end_time = curr_time - datetime.timedelta(minutes=10)
+        day_beg = datetime.datetime.combine(datetime.datetime.now().date(), datetime.time.min)
+        self.update_controller(True, test_start_time, test_end_time)
+        db_state = self.latest_state_db()
+        self.assertIsNot(db_state, None)
+        self.assertIs(db_state['enabled'], 1)
+        self.assertEqual(db_state['start_time'].total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(db_state['end_time'].total_seconds(), test_end_time.total_seconds())
+        success = self.controller.sync_with_db()
+        self.assertTrue(success)
+        self.assertTrue(self.controller.timer_enabled)
+        self.assertEqual(self.controller.start_time.total_seconds(), test_start_time.total_seconds())
+        self.assertEqual(self.controller.end_time.total_seconds(), test_end_time.total_seconds())
+        controller_state = self.controller.get_controller_state()
+        self.assertIs(controller_state.state, pins.LOW)
+        self.assertFalse(controller_state.forced)
+        self.assertEqual((controller_state.due_by-day_beg).total_seconds(), test_end_time.total_seconds())
+
+    # @unittest.skip("no good reason")
+    def test5_controller_sync_close_3(self):
         self.update_controller(False)
         db_state = self.latest_state_db()
         self.assertIsNot(db_state, None)
@@ -465,9 +495,10 @@ class TestValveTimerController(unittest.TestCase):
         controller_state = self.controller.get_controller_state()
         self.assertIs(controller_state.state, pins.LOW)
         self.assertFalse(controller_state.forced)
+        self.assertEqual(controller_state.due_by.replace(microsecond=0), db_state['created'])
 
     # @unittest.skip("no good reason")
-    def test5_controller_sync_fail_missing_start_end_times(self):
+    def test6_controller_sync_fail_missing_start_end_times(self):
         old_timer_enabled = self.controller.timer_enabled
         old_start_time = self.controller.start_time
         old_end_time = self.controller.end_time
@@ -489,7 +520,7 @@ class TestValveTimerController(unittest.TestCase):
        
 
     # @unittest.skip("no good reason")
-    def test6_controller_sync_fail_invalid_start_end_times(self):
+    def test7_controller_sync_fail_invalid_start_end_times(self):
         old_timer_enabled = self.controller.timer_enabled
         old_start_time = self.controller.start_time
         old_end_time = self.controller.end_time
@@ -514,7 +545,7 @@ class TestValveTimerController(unittest.TestCase):
        
 
     # @unittest.skip("no good reason")
-    def test7_controller_sync_fail_invalid_enabled_flag(self):
+    def test8_controller_sync_fail_invalid_enabled_flag(self):
         old_timer_enabled = self.controller.timer_enabled
         old_start_time = self.controller.start_time
         old_end_time = self.controller.end_time

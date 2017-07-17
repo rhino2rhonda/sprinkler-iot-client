@@ -4,18 +4,23 @@ if globals.RPi_MODE:
     import RPi.GPIO as pins
 else:
     import DummyGPIO as pins
-import SprinklerUtils as utils
 
+import SprinklerUtils as utils
+import logging
+
+
+# Globals
 PINS_MODE = globals.PINS_MODE
-logger = utils.get_logger()
+
 
 class PinsController(object):
 
     def __init__(self):
+        self.logger = logging.getLogger()
         pins.setmode(PINS_MODE)
         assert pins.getmode() == PINS_MODE
-        logger.debug("Pins have been initialized")
+        self.logger.debug("Pins have been initialized")
 
     def clean_up(self):
         pins.cleanup()
-        logger.debug("Clean up complete")
+        self.logger.debug("Clean up complete")

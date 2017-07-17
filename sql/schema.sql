@@ -26,6 +26,12 @@ create table product (
 	unique key `unique_user_product_type` (`user_id`, `product_type_id`)
 );
 
+create table product_heart_beat (
+	`id` int auto_increment primary key,
+	`product_id` int not null,
+	`created` timestamp not null default current_timestamp
+);
+
 -- Components
 
 create table component_type (

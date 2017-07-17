@@ -10,12 +10,15 @@ import SprinklerUtils as utils
 import threading
 import time
 import datetime
+import logging
+
 
 # Globals
-logger = utils.get_logger()
+logger = logging.getLogger(__name__)
 PRODUCT_ID = globals.PRODUCT_ID
 VALVE_PIN = globals.VALVE_PIN
 VALVE_STATE_UPDATE_INTERVAL= globals.VALVE_STATE_UPDATE_INTERVAL
+
 
 # Constants
 VALVE_COMPONENT_NAME = 'valve'
@@ -29,7 +32,7 @@ class ValveSwitch(object):
 
     def __init__(self):
 
-        self.logger = utils.get_logger()
+        self.logger = logging.getLogger(__name__ + '.ValveSwitch')
         self.lock = threading.RLock()
 
         # Unique component ID
@@ -158,7 +161,7 @@ class BasicValveController(object):
 
     def __init__(self, controller_name="BasicValveController"):
 
-        self.logger = utils.get_logger()
+        self.logger = logging.getLogger(__name__ + '.' + controller_name)
         self.logger.debug("Initializing Valve Controller")
         
         # Assign a name to identify the controller
@@ -192,7 +195,7 @@ class ValveManager(object):
 
     def __init__(self, switch, controllers = []):
         
-        self.logger = utils.get_logger()
+        self.logger = logging.getLogger(__name__ + '.ValveManager')
 
         self.switch = switch
         self.controllers = {}
@@ -202,7 +205,7 @@ class ValveManager(object):
 
         # Start a daemon thread for valve status updates
         self.active = True
-        self.update_thread = threading.Thread(target=self.keep_updating_valve_switch)
+        self.update_thread = threading.Thread(target=self.keep_updating_valve_switch, name='valve-update-thread')
         self.update_thread.setDaemon(True)
         self.update_thread.start()
         
@@ -251,8 +254,9 @@ class ValveManager(object):
                 sync_failed = True
                 break
             state = controller.get_controller_state()
+            
             if state.due_by > curr_time:
-                logger.debug("Skipping state for controller %s as state due time (%s) is after current time (%s)", controller.name, state.due_by, curr_time)
+                self.logger.debug("Skipping state for controller %s as state due time (%s) is after current time (%s)", controller.name, state.due_by, curr_time)
                 continue
             controller_states.append(state)
 
@@ -412,7 +416,7 @@ class ValveTimerController(BasicValveController):
         self.logger.debug("Syncing controller %s with DB", self.name)
         with DB.Connection() as cursor:
 
-            sql = "select enabled, start_time, end_time from valve_timer where " +\
+            sql = "select enabled, start_time, end_time, created from valve_timer where " +\
                     "id=(select max(id) from valve_timer where component_id=%s)"
 
             count = 0
@@ -454,26 +458,35 @@ class ValveTimerController(BasicValveController):
                     self.logger.error("Invalid values: Start time is greater than end time for controller %s" % self.name)
                     return False
 
+                timer_created = row['created']
+                if timer_created is None:
+                    self.logger.error("Invalid values: creation time is not available for state of controller %s" % self.name)
+                    return False
+                
                 self.timer_enabled = True
                 self.start_time = start_time
                 self.end_time = end_time
-            
+                self.timer_created = timer_created
+
             return True
 
 
     def get_controller_state(self):
         self.logger.debug("Fetching controller state for controller %s" % self.name)
         curr_state = None
+        due_by = None
         
         if not self.timer_enabled:
             logger.debug("Valve timer is disabled")
             curr_state = pins.LOW
+            due_by = self.timer_created
         else:
             curr_time = datetime.datetime.now()
             today_begin = datetime.datetime.combine(curr_time.date(), datetime.time.min)
             timer_start = today_begin + self.start_time
             timer_end = today_begin + self.end_time
-            curr_state = pins.HIGH if timer_start < curr_time < timer_end else pins.LOW
+            curr_state = pins.HIGH if timer_start <= curr_time < timer_end else pins.LOW
+            due_by = today_begin if curr_time < timer_start else (timer_start if curr_time < timer_end else timer_end)
             logger.debug("Valve timer is enabled. Current time lies in timer duration?: %d", curr_state)
         
-        return ControllerState(curr_state, self.name)
+        return ControllerState(curr_state, due_by)

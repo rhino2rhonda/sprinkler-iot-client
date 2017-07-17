@@ -9,6 +9,7 @@ import SprinklerUtils as utils
 import SprinklerDB as DB
 import time
 import threading
+import logging
 
 
 # Globals
@@ -28,7 +29,7 @@ class FlowSensor(object):
 
     def __init__(self):
         
-        self.logger = utils.get_logger()
+        self.logger = logging.getLogger(__name__)
         self.lock = threading.RLock()
 
         # Unique component ID
@@ -45,7 +46,7 @@ class FlowSensor(object):
 
         # Start a daemon thread for tracking water flow
         self.active = True
-        self.save_thread = threading.Thread(target=self.keep_saving_flow)
+        self.save_thread = threading.Thread(target=self.keep_saving_flow, name='flow-save-thread')
         self.save_thread.setDaemon(True)
         self.save_thread.start()
 

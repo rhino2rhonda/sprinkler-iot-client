@@ -3,6 +3,7 @@ import SprinklerGlobals as globals
 import SprinklerUtils as utils
 import threading
 import time
+import logging
 
 
 # Globals
@@ -14,23 +15,24 @@ DB_NAME = globals.DB_NAME
 DB_PING_INTERVAL = globals.DB_PING_INTERVAL
 PRODUCT_ID = globals.PRODUCT_ID
 
-logger = utils.get_logger()
+logger = logging.getLogger(__name__)
 
 # Maintains a single DB connection and ensures synchronised access
 # TODO: use DB agnostic ORM instead
+# TODO: use __new__ for implementing singularity
 @utils.singleton
 class Connection(object):
 
     def __init__(self):
         
-        self.logger = utils.get_logger()
+        self.logger = logging.getLogger(__name__ + ".Connection")
         self.lock = threading.RLock()
         self.connection = self.create_connection()
         self.cursor = None
 
         # Start a keep alive daemon thread
         self.active = True
-        self.keep_alive_thread = threading.Thread(target=self.keep_alive)
+        self.keep_alive_thread = threading.Thread(target=self.keep_alive, name="keep-alive-thread")
         self.keep_alive_thread.setDaemon(True)
         self.keep_alive_thread.start()
 
