@@ -1,4 +1,4 @@
-# Dummy module to emulate raspberry pi driver
+# Dummy (non functional) module to emulate raspberry pi driver
 
 HIGH=1
 LOW=0

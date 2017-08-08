@@ -1,2 +1,2 @@
 # sprinkler-iot-client
-IOT client for sprinkler control
+ Raspberry PI client for sprinkler control
