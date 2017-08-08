@@ -13,7 +13,9 @@ def create_log_dir():
 # Configures application wide logging from JSON file
 def configure_logging():
     create_log_dir()
-    with open('logging.json', 'r') as log_file:
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    log_config_file = os.path.join(dir_path, 'logging.json')
+    with open(log_config_file, 'r') as log_file:
         log_dict = json.load(log_file)
         logging.config.dictConfig(log_dict)
         logger = logging.getLogger(__name__)
